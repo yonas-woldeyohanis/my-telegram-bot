@@ -1,4 +1,5 @@
 import os
+from keep_alive import keep_alive
 import logging
 import asyncio
 import re
@@ -296,10 +297,15 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- MAIN ---
 if __name__ == '__main__':
+    # 1. Start the Fake Web Server (For UptimeRobot)
+    keep_alive()
+
+    # 2. Check Token
     if not TOKEN:
         print("Error: BOT_TOKEN not found in .env")
         exit(1)
 
+    # 3. Build Bot
     application = ApplicationBuilder().token(TOKEN).build()
 
     application.add_handler(CommandHandler('start', start))
@@ -307,4 +313,6 @@ if __name__ == '__main__':
     application.add_handler(CallbackQueryHandler(button_click))
 
     print("Bot is running...")
+    
+    # 4. Run Bot
     application.run_polling()
