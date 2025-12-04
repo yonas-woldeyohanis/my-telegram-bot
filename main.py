@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import re
+import shutil
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -51,14 +52,29 @@ def cleanup_file(filename):
     except Exception as e:
         logging.error(f"Error deleting file {filename}: {e}")
 
-# --- THE ANTI-BOT FIX ---
+# --- THE COOKIE FIX ---
 def get_cookie_path():
-    # Check if we are on Render (Secret file location)
-    if os.path.exists('/etc/secrets/cookies.txt'):
-        return '/etc/secrets/cookies.txt'
-    # Check if we are on Local PC (Project folder)
+    """
+    Locates cookies.txt.
+    If on Render (Read-Only), copies it to a writable temp file.
+    """
+    render_secret_path = '/etc/secrets/cookies.txt'
+    writable_path = 'cookies_temp.txt'
+
+    # 1. Check if we are on Render
+    if os.path.exists(render_secret_path):
+        try:
+            # We MUST copy the file because yt-dlp tries to write to it
+            shutil.copy(render_secret_path, writable_path)
+            return writable_path
+        except Exception as e:
+            print(f"Error copying cookies: {e}")
+            return None
+            
+    # 2. Check if we are on Local PC
     elif os.path.exists('cookies.txt'):
         return 'cookies.txt'
+    
     return None
 
 def get_common_opts():
@@ -66,7 +82,6 @@ def get_common_opts():
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        # We stick to the default client now, but we ADD cookies
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
     
@@ -92,7 +107,6 @@ def get_video_options(url):
                     resolutions.add(f['height'])
             return sorted(list(resolutions), reverse=True)
     except Exception as e:
-        # Log the specific error to help debugging
         print(f"Error getting options: {e}")
         return []
 
@@ -100,11 +114,10 @@ def get_video_options(url):
 
 async def download_and_send_audio(url, update, context):
     chat_id = update.effective_chat.id
-    status_msg = await context.bot.send_message(chat_id, "⏳ Downloading Audio... (Converting to MP3)")
+    status_msg = await context.bot.send_message(chat_id, "⏳ Downloading Audio...")
     
     output_template = f"downloads/{chat_id}_%(title)s.%(ext)s"
     
-    # Merge common opts with specific audio opts
     ydl_opts = get_common_opts()
     ydl_opts.update({
         'format': 'bestaudio/best',
@@ -134,6 +147,7 @@ async def download_and_send_audio(url, update, context):
         await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=f"❌ Error: {str(e)}")
     finally:
         cleanup_file(final_filename)
+        # Cleanup the temp cookie file too if needed, though keeping it is fine
         if chat_id in processing_users:
             processing_users.remove(chat_id)
 
@@ -148,7 +162,6 @@ async def download_and_send_video(url, quality, update, context):
     else:
         format_str = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]'
 
-    # Merge common opts with specific video opts
     ydl_opts = get_common_opts()
     ydl_opts.update({
         'format': format_str,
@@ -195,7 +208,6 @@ async def download_and_send_image(url, update, context):
     
     output_template = f"downloads/{chat_id}_image" 
     
-    # Merge common opts
     ydl_opts = get_common_opts()
     ydl_opts.update({
         'format': 'best',
