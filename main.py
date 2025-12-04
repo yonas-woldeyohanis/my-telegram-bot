@@ -52,26 +52,35 @@ def cleanup_file(filename):
         logging.error(f"Error deleting file {filename}: {e}")
 
 # --- THE ANTI-BOT FIX ---
+def get_cookie_path():
+    # Check if we are on Render (Secret file location)
+    if os.path.exists('/etc/secrets/cookies.txt'):
+        return '/etc/secrets/cookies.txt'
+    # Check if we are on Local PC (Project folder)
+    elif os.path.exists('cookies.txt'):
+        return 'cookies.txt'
+    return None
+
 def get_common_opts():
-    """
-    Returns the options that trick YouTube into thinking we are a phone.
-    """
-    return {
+    opts = {
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        # THIS IS THE KEY FIX: Pretend to be an Android device
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios']
-            }
-        },
-        # Spoof User Agent to look like a browser
+        # We stick to the default client now, but we ADD cookies
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     }
+    
+    # Inject Cookies if found
+    cookie_path = get_cookie_path()
+    if cookie_path:
+        opts['cookiefile'] = cookie_path
+    else:
+        print("WARNING: No cookies.txt found. YouTube might block this request.")
+        
+    return opts
 
 def get_video_options(url):
-    ydl_opts = get_common_opts() # Load the anti-bot settings
+    ydl_opts = get_common_opts() 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -82,14 +91,16 @@ def get_video_options(url):
                 if f.get('vcodec') != 'none' and f.get('height'):
                     resolutions.add(f['height'])
             return sorted(list(resolutions), reverse=True)
-    except Exception:
+    except Exception as e:
+        # Log the specific error to help debugging
+        print(f"Error getting options: {e}")
         return []
 
 # --- DOWNLOAD LOGIC ---
 
 async def download_and_send_audio(url, update, context):
     chat_id = update.effective_chat.id
-    status_msg = await context.bot.send_message(chat_id, "⏳ Downloading audio and converting to MP3... 🎧 Please wait.")
+    status_msg = await context.bot.send_message(chat_id, "⏳ Downloading Audio... (Converting to MP3)")
     
     output_template = f"downloads/{chat_id}_%(title)s.%(ext)s"
     
@@ -112,19 +123,15 @@ async def download_and_send_audio(url, update, context):
         temp_name = await loop.run_in_executor(None, run_download)
         final_filename = temp_name.rsplit('.', 1)[0] + ".mp3"
 
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="📤 Uploading your MP3 now... 🎵")
-
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="🚀 Uploading Audio...")
+        
         with open(final_filename, 'rb') as f:
-            await context.bot.send_audio(chat_id=chat_id, audio=f, caption="🎧 Your MP3 is ready — enjoy!")
+            await context.bot.send_audio(chat_id=chat_id, audio=f, caption="Here is your audio! 🎵")
 
         await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
 
     except Exception as e:
-        await context.bot.edit_message_text(
-            chat_id=chat_id, 
-            message_id=status_msg.message_id, 
-            text=f"❌ Oops — an error occurred: {str(e)}\nTry a different link or a lower quality."
-        )
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=f"❌ Error: {str(e)}")
     finally:
         cleanup_file(final_filename)
         if chat_id in processing_users:
@@ -132,7 +139,7 @@ async def download_and_send_audio(url, update, context):
 
 async def download_and_send_video(url, quality, update, context):
     chat_id = update.effective_chat.id
-    status_msg = await context.bot.send_message(chat_id, f"⏳ Preparing video ({quality}p) — downloading now... 🎬")
+    status_msg = await context.bot.send_message(chat_id, f"⏳ Downloading Video ({quality}p)...")
 
     output_template = f"downloads/{chat_id}_%(title)s.%(ext)s"
     
@@ -164,26 +171,19 @@ async def download_and_send_video(url, quality, update, context):
              final_filename = temp_name.rsplit('.', 1)[0] + ".mp4"
 
         if os.path.exists(final_filename) and os.path.getsize(final_filename) > 52428800:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=status_msg.message_id, 
-                text="❌ File too big (>50MB). Telegram API limit reached. Try a lower quality or download audio instead."
-            )
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, 
+                                                text="❌ File too big (>50MB). Telegram API limit reached.")
             return
 
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="📤 Uploading your video... ▶️")
-
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="🚀 Uploading Video...")
+        
         with open(final_filename, 'rb') as f:
             await context.bot.send_video(chat_id=chat_id, video=f, supports_streaming=True)
 
         await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
 
     except Exception as e:
-        await context.bot.edit_message_text(
-            chat_id=chat_id, 
-            message_id=status_msg.message_id, 
-            text=f"❌ Oops — an error occurred: {str(e)}"
-        )
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=f"❌ Error: {str(e)}")
     finally:
         cleanup_file(final_filename)
         if chat_id in processing_users:
@@ -191,8 +191,8 @@ async def download_and_send_video(url, quality, update, context):
 
 async def download_and_send_image(url, update, context):
     chat_id = update.effective_chat.id
-    status_msg = await context.bot.send_message(chat_id, "⏳ Downloading image... 📸")
-
+    status_msg = await context.bot.send_message(chat_id, "⏳ Downloading Image...")
+    
     output_template = f"downloads/{chat_id}_image" 
     
     # Merge common opts
@@ -223,23 +223,15 @@ async def download_and_send_image(url, update, context):
                 break
         
         if found_file:
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="📤 Uploading image... Here you go! 📷")
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="🚀 Uploading Image...")
             with open(found_file, 'rb') as f:
-                await context.bot.send_photo(chat_id=chat_id, photo=f, caption="📸 Image delivered — enjoy!")
+                await context.bot.send_photo(chat_id=chat_id, photo=f)
             await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
         else:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, 
-                message_id=status_msg.message_id, 
-                text="❌ Could not fetch an image. Try Video mode or send another link."
-            )
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text="❌ Could not fetch image.")
 
     except Exception as e:
-        await context.bot.edit_message_text(
-            chat_id=chat_id, 
-            message_id=status_msg.message_id, 
-            text=f"❌ Oops — an error occurred: {str(e)}"
-        )
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=status_msg.message_id, text=f"❌ Error: {str(e)}")
     finally:
         cleanup_file(found_file)
         if chat_id in processing_users:
@@ -248,21 +240,18 @@ async def download_and_send_image(url, update, context):
 # --- BOT HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Hey! Send me a link (YouTube, TikTok, Instagram) and I'll fetch audio, video or images for you.\n\n"
-        "When you send a link you'll be able to choose 🎵 Audio (MP3), 🎬 Video (Quality) or 📸 Image."
-    )
+    await update.message.reply_text("👋 Hello! Send me a link to download.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text
 
     if chat_id in processing_users:
-        await update.message.reply_text("⚠️ I'm already working on a request for you — please wait for it to finish.")
+        await update.message.reply_text("⚠️ Processing previous link. Please wait!")
         return
 
     if not is_valid_url(text):
-        await update.message.reply_text("❌ That doesn't look like a valid link. Send a URL starting with http:// or https:// 🔗")
+        await update.message.reply_text("⚠️ Please send a valid http:// or https:// link.")
         return
 
     context.user_data['current_url'] = text
@@ -273,7 +262,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📸 Image", callback_data='type_image')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("✅ Link received! What would you like to download? Choose an option below ⬇️", reply_markup=reply_markup)
+    await update.message.reply_text("Link detected! Choose format:", reply_markup=reply_markup)
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -281,7 +270,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if chat_id in processing_users:
-        await query.edit_message_text("⚠️ You're already downloading something — please wait a bit!")
+        await query.edit_message_text("⚠️ Processing active. Please wait.")
         return
 
     choice = query.data
@@ -298,18 +287,18 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await download_and_send_image(url, update, context)
         
     elif choice == 'type_video_selection':
-        await query.edit_message_text(text="🔍 Scanning available video qualities...")
+        await query.edit_message_text(text="🔍 Scanning available qualities...")
         resolutions = get_video_options(url)
         
         if not resolutions:
-            keyboard = [[InlineKeyboardButton("🎬 Download Best (Auto)", callback_data='download_video_best')]]
+            keyboard = [[InlineKeyboardButton("🎬 Download Best", callback_data='download_video_best')]]
         else:
             keyboard = []
             for res in resolutions[:4]:
                 keyboard.append([InlineKeyboardButton(f"🎬 {res}p", callback_data=f'download_video_{res}')])
             
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text="🎚️ Select Video Quality:", reply_markup=reply_markup)
+        await query.edit_message_text(text="Select Video Quality:", reply_markup=reply_markup)
     
     elif choice.startswith('download_video_'):
         processing_users.add(chat_id)
