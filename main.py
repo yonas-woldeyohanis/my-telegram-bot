@@ -82,15 +82,18 @@ def get_common_opts():
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        # Force the Android Client (It has weaker security checks than Web)
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        }
     }
     
-    # Inject Cookies if found
+    # Inject Cookies if found (Only use if they exist)
     cookie_path = get_cookie_path()
     if cookie_path:
         opts['cookiefile'] = cookie_path
-    else:
-        print("WARNING: No cookies.txt found. YouTube might block this request.")
         
     return opts
 
