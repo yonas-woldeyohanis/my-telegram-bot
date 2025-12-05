@@ -1,7 +1,7 @@
-# Use Python image
-FROM python:3.9-slim
+# CHANGE THIS LINE: Use Python 3.10 instead of 3.9
+FROM python:3.10-slim
 
-# Install FFmpeg AND Git (Required for downloading latest yt-dlp)
+# Install FFmpeg AND Git
 RUN apt-get update && \
     apt-get install -y ffmpeg git && \
     rm -rf /var/lib/apt/lists/*
